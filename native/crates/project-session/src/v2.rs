@@ -735,7 +735,7 @@ pub fn document_changes(
             "project.changed",
             views::project_meta_view(ids.project_id.as_str(), project),
         ));
-    } else if plan.kind == "track.set_singer" {
+    } else if plan.kind == "track.set_singer" || plan.kind == "track.set_renderer" {
         if let Some(track_id) = &plan.track_id {
             changes.push(Change::invalidate("track.changed").with_track(track_id.clone()));
         }
@@ -932,6 +932,7 @@ pub fn plan_document(
         kind,
         "track.create"
             | "track.set_singer"
+            | "track.set_renderer"
             | "track.remove"
             | "track.reorder"
             | "part.create"
@@ -1018,6 +1019,38 @@ pub fn plan_document(
             after.tracks[located.track].singer = singer;
             plan.track_id = Some(track_id);
             plan.command_name = "Track singer".to_string();
+        }
+        "track.set_renderer" => {
+            let track_id = require_str(command, "track_id")?;
+            let located = locate_track(ids, &track_id)?;
+            let renderer = match command.get("renderer") {
+                None | Some(Value::Null) => None,
+                Some(value) => {
+                    let name = value.as_str().ok_or_else(|| {
+                        SessionError::validation_field(
+                            "renderer",
+                            "renderer must be a string or null",
+                        )
+                    })?;
+                    if name.trim().is_empty() {
+                        None
+                    } else {
+                        Some(name.to_string())
+                    }
+                }
+            };
+            let track = &mut after.tracks[located.track];
+            if let Some(ref mut settings) = track.renderer_settings {
+                settings.renderer = renderer;
+            } else if let Some(r) = renderer {
+                track.renderer_settings = Some(domain::URenderSettings {
+                    renderer: Some(r),
+                    resampler: None,
+                    wavtool: None,
+                });
+            }
+            plan.track_id = Some(track_id);
+            plan.command_name = "Track renderer".to_string();
         }
         "track.remove" => {
             let track_id = require_str(command, "track_id")?;

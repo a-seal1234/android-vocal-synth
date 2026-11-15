@@ -238,6 +238,41 @@ function SingerPicker({ track }) {
   </span>;
 }
 
+const RENDERER_CHOICES = [
+  { id: '', label: 'Default engine' },
+  { id: 'r1', label: 'WORLDLINE-R (C++)' },
+  { id: 'r1-rs', label: 'WORLDLINE-R (Pure Rust)' },
+  { id: 'classic', label: 'Classic Resampler' },
+  { id: 'r2', label: 'WORLDLINE-R2 (Neural)' },
+  { id: 'diffsinger', label: 'DiffSinger' },
+  { id: 'moe', label: 'MoE Student' },
+];
+
+function RendererPicker({ track }) {
+  const { dispatch } = useClone();
+  const current = track.renderer ?? '';
+  return <span className="ou-renderer-select">
+    <select
+      aria-label={`Renderer for ${track.name}`}
+      title="Synthesis engine for this track"
+      value={current}
+      onClick={event => event.stopPropagation()}
+      onChange={event => dispatch({
+        type: 'track/renderer',
+        trackId: track.id,
+        renderer: event.target.value || null,
+      })}
+    >
+      {RENDERER_CHOICES.map(({ id, label }) => (
+        <option key={id} value={id}>{label}</option>
+      ))}
+      {current && !RENDERER_CHOICES.some(c => c.id === current) && (
+        <option value={current}>{current}</option>
+      )}
+    </select>
+  </span>;
+}
+
 function TrackHeaderCard({ track, index, active }) {
   const { dispatch, tracks } = useClone();
   const [fxOpen, setFxOpen] = useState(false);
@@ -268,6 +303,7 @@ function TrackHeaderCard({ track, index, active }) {
       {/* The engine keeps the real value (null when unset); the placeholder is
           the panel's own, so a missing voicebank never looks like a real one. */}
       <SingerPicker track={track} />
+      <RendererPicker track={track} />
       <small className="ou-track-detail">{track.singer_detail}</small>
     </div>
     <div className="ou-track-side">

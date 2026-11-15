@@ -47,6 +47,9 @@ test('panel intents become exactly the documented command envelopes', () => {
   assert.deepEqual(commandsFor({ type: 'track/mute', trackId: 't-1', mute: true }), [{ type: 'track.set_mute', track_id: 't-1', mute: true }]);
   assert.deepEqual(commandsFor({ type: 'track/solo', trackId: 't-1', solo: true }), [{ type: 'track.set_solo', track_id: 't-1', solo: true }]);
   assert.deepEqual(commandsFor({ type: 'track/volume', trackId: 't-1', volumeDb: -6 }), [{ type: 'track.set_volume_db', track_id: 't-1', volume: -6 }]);
+  assert.deepEqual(commandsFor({ type: 'track/singer', trackId: 't-1', singerId: 'teto' }), [{ type: 'track.set_singer', track_id: 't-1', singer_id: 'teto' }]);
+  assert.deepEqual(commandsFor({ type: 'track/renderer', trackId: 't-1', renderer: 'classic' }), [{ type: 'track.set_renderer', track_id: 't-1', renderer: 'classic' }]);
+  assert.deepEqual(commandsFor({ type: 'track/renderer', trackId: 't-1', renderer: '' }), [{ type: 'track.set_renderer', track_id: 't-1', renderer: null }]);
 });
 
 test('intents the contract cannot express stay UI state instead of faking a command', () => {

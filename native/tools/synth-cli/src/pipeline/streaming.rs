@@ -265,6 +265,43 @@ pub fn render_mixdown_stream_by_track_from_frame<F>(
     pronunciations: Option<&[Vec<Vec<Option<domain::UPronunciation>>>]>,
     block_frames: usize,
     start_frame: i64,
+    sink: F,
+) -> Result<StreamMixdownReport, String>
+where
+    F: FnMut(u64, &[f32]) -> Result<(), String>,
+{
+    render_mixdown_stream_by_track_from_frame_with_engines(
+        project,
+        voicebanks,
+        renderer,
+        None,
+        kind_override,
+        cache,
+        media,
+        cancel,
+        progress,
+        pronunciations,
+        block_frames,
+        start_frame,
+        sink,
+    )
+}
+
+/// Playhead-seekable variant of [`render_mixdown_stream_by_track_from_frame`] with per-track engine support.
+#[allow(clippy::too_many_arguments)]
+pub fn render_mixdown_stream_by_track_from_frame_with_engines<F>(
+    project: &UProject,
+    voicebanks: &[Option<&Voicebank>],
+    renderer: &dyn PhraseRenderer,
+    engine_by_track: Option<&dyn Fn(usize) -> &'static dyn PhraseRenderer>,
+    kind_override: Option<phonemizer::PhonemizerKind>,
+    cache: &mut Option<RenderCache>,
+    media: &dyn MediaSource,
+    cancel: Option<&AtomicBool>,
+    progress: Option<ProgressFn<'_>>,
+    pronunciations: Option<&[Vec<Vec<Option<domain::UPronunciation>>>]>,
+    block_frames: usize,
+    start_frame: i64,
     mut sink: F,
 ) -> Result<StreamMixdownReport, String>
 where
@@ -697,8 +734,12 @@ where
             }
             let planned = tracks[track_no].chunks[tracks[track_no].next_chunk].clone();
             let phrase = &tracks[track_no].phrases[planned.phrase_index];
-            let sub = chunk_render_input(phrase, &planned.chunk, renderer.curve_frame_ms());
-            let key = planned.chunk.hash(&phrase.input, renderer.cache_salt());
+            let track_renderer: &dyn PhraseRenderer = match engine_by_track {
+                Some(f) => f(track_no),
+                None => renderer,
+            };
+            let sub = chunk_render_input(phrase, &planned.chunk, track_renderer.curve_frame_ms());
+            let key = planned.chunk.hash(&phrase.input, track_renderer.cache_salt());
             let phrase_position_ms = phrase.group.position_ms;
             let first_lead = phrase.input.phonemes[planned.chunk.own_range.start].leading_ms;
             let phrase_phoneme_count = phrase.input.phonemes.len();
@@ -793,7 +834,7 @@ where
                 }
             } else {
                 let synth_started = Instant::now();
-                renderer
+                track_renderer
                     .render_phrase_stream(&sub, 4096, &mut consume_block)
                     .map_err(|error| {
                         format!(

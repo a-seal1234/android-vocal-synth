@@ -26,7 +26,9 @@ mod incremental_mix;
 pub use incremental_mix::IncrementalTrackMixer;
 mod streaming;
 pub use streaming::{
-    render_mixdown_stream_by_track_from_frame, render_mixdown_stream_by_track_with_pronunciations,
+    render_mixdown_stream_by_track_from_frame,
+    render_mixdown_stream_by_track_from_frame_with_engines,
+    render_mixdown_stream_by_track_with_pronunciations,
     render_mixdown_stream_with_pronunciations, render_mixdown_stream_with_pronunciations_from_frame,
     StreamMixdownReport, STREAM_BLOCK_FRAMES, STREAM_MEDIA_SNAPSHOT_MAX_BYTES,
 };
@@ -1115,11 +1117,47 @@ pub fn render_mixdown_with_pronunciations(
     progress: Option<ProgressFn<'_>>,
     pronunciations: Option<&[Vec<Vec<Option<domain::UPronunciation>>>]>,
 ) -> Result<MixdownReport, String> {
+    render_mixdown_with_pronunciations_and_engines(
+        project,
+        voicebank,
+        renderer,
+        None,
+        phonemizer_override,
+        verbose,
+        cache,
+        media,
+        mixer,
+        cancel,
+        progress,
+        pronunciations,
+    )
+}
+
+/// `render_mixdown` with per-track engine support and stable-session pronunciations.
+#[allow(clippy::too_many_arguments)]
+pub fn render_mixdown_with_pronunciations_and_engines(
+    project: &UProject,
+    voicebank: &Voicebank,
+    renderer: &dyn PhraseRenderer,
+    engine_by_track: Option<&dyn Fn(usize) -> &'static dyn PhraseRenderer>,
+    phonemizer_override: Option<PhonemizerKind>,
+    verbose: bool,
+    cache: &mut Option<RenderCache>,
+    media: &dyn MediaSource,
+    mixer: Option<&mut dyn PostMixFx>,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    progress: Option<ProgressFn<'_>>,
+    pronunciations: Option<&[Vec<Vec<Option<domain::UPronunciation>>>]>,
+) -> Result<MixdownReport, String> {
     let mut samples = Vec::<f32>::new();
     let mut tracks = Vec::new();
     for track_no in 0..project.tracks.len() {
         let track = &project.tracks[track_no];
         let kind = phonemizer_override.unwrap_or_else(|| PhonemizerKind::from_track(track));
+        let track_renderer = match engine_by_track {
+            Some(f) => f(track_no),
+            None => renderer,
+        };
         let mut track_bus = Vec::<f32>::new();
         let mut report = MixdownTrackReport {
             track_no: track_no as i32,
@@ -1138,7 +1176,7 @@ pub fn render_mixdown_with_pronunciations(
             let rendered = render_project_with_progress_and_pronunciations(
                 project,
                 voicebank,
-                renderer,
+                track_renderer,
                 track_no as i32,
                 kind,
                 verbose,

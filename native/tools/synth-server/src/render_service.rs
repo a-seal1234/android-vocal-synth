@@ -638,6 +638,33 @@ fn run_worker(
 
     let _ = ready.send(Ok(()));
 
+    let resolve_engine = |name: &str| -> Option<&'static dyn pipeline::PhraseRenderer> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let key = match trimmed {
+            "r1" | "WORLDLINE-R" => "r1",
+            "r1-rs" => "r1-rs",
+            "r2" | "WORLDLINE-R2" => "r2",
+            "classic" | "CLASSIC" => "classic",
+            "diffsinger" | "DiffSinger" => "diffsinger",
+            "moe" | "MoE" => "moe",
+            _ => trimmed,
+        };
+        engines
+            .get(key)
+            .or_else(|| engines.get("r1"))
+            .map(|b| unsafe {
+                std::mem::transmute::<
+                    &dyn pipeline::PhraseRenderer,
+                    &'static dyn pipeline::PhraseRenderer,
+                >(b.as_ref())
+            })
+    };
+    let default_fallback: &'static dyn pipeline::PhraseRenderer =
+        resolve_engine("r1").expect("r1 always opened");
+
     while let Ok(job) = rx.recv() {
         match job {
             RenderJob::SynthNote {
@@ -648,10 +675,10 @@ fn run_worker(
                 reply,
             } => {
                 // synth-note always uses the default (r1) engine.
-                let engine = engines.get("r1").expect("r1 always opened");
+                let engine = default_fallback;
                 let result = synth_cli::pipeline::synth_note(
                     &voicebank,
-                    engine.as_ref(),
+                    engine,
                     &alias,
                     tone,
                     duration_ms,
@@ -675,21 +702,7 @@ fn run_worker(
                 // `per_phrase` is given (one engine id per phrase in
                 // render order) each phrase renders with its own engine
                 // ("ระหว่างท่อน").
-                let resolve = |name: &str| -> Option<&dyn pipeline::PhraseRenderer> {
-                    match name {
-                        "r1-rs" if engines.contains_key("r1-rs") => engines.get("r1-rs"),
-                        "r2" if engines.contains_key("r2") => engines.get("r2"),
-                        "classic" if engines.contains_key("classic") => engines.get("classic"),
-                        "diffsinger" if engines.contains_key("diffsinger") => {
-                            engines.get("diffsinger")
-                        }
-                        "moe" if engines.contains_key("moe") => engines.get("moe"),
-                        _ => engines.get("r1"),
-                    }
-                    .map(|b| b.as_ref() as &dyn pipeline::PhraseRenderer)
-                };
-                let default_renderer = resolve(&engine_name)
-                    .unwrap_or_else(|| engines.get("r1").expect("r1 always opened").as_ref());
+                let default_renderer = resolve_engine(&engine_name).unwrap_or(default_fallback);
                 // Per-phrase map: index (in render order) → engine id.
                 let phrase_map: Vec<&str> = per_phrase.iter().map(|s| s.as_str()).collect();
                 // Resolve every phrase's renderer up front — the engines
@@ -698,15 +711,7 @@ fn run_worker(
                 // of this render call.
                 let resolved: Vec<&'static dyn pipeline::PhraseRenderer> = phrase_map
                     .iter()
-                    .map(|name| {
-                        let e = resolve(name).unwrap_or(default_renderer);
-                        unsafe {
-                            std::mem::transmute::<
-                                &dyn pipeline::PhraseRenderer,
-                                &'static dyn pipeline::PhraseRenderer,
-                            >(e)
-                        }
-                    })
+                    .map(|name| resolve_engine(name).unwrap_or(default_renderer))
                     .collect();
                 let engine_by_phrase_ref: Option<
                     &dyn Fn(usize) -> &'static dyn pipeline::PhraseRenderer,
@@ -718,7 +723,7 @@ fn run_worker(
                             resolved
                                 .get(idx)
                                 .copied()
-                                .unwrap_or(unsafe { std::mem::transmute(default_renderer) })
+                                .unwrap_or(default_renderer)
                         },
                     )
                 };
@@ -747,6 +752,13 @@ fn run_worker(
                         ProjectSource::Path(path) => pipeline::load_project(path)?,
                         ProjectSource::Yaml(yaml) => pipeline::parse_project(yaml)?,
                     };
+                    let track_renderer = project
+                        .tracks
+                        .get(track as usize)
+                        .and_then(|t| t.renderer_settings.as_ref())
+                        .and_then(|s| s.renderer.as_deref())
+                        .and_then(resolve_engine)
+                        .unwrap_or(default_renderer);
                     // Render cache next to the voicebank (OpenUtau-style
                     // res-{hash} files). On Android this lands in
                     // filesDir/engine/cache — persists across Play/Export.
@@ -774,7 +786,7 @@ fn run_worker(
                     pipeline::render_track_with_media(
                         &project,
                         &voicebank,
-                        default_renderer,
+                        track_renderer,
                         track,
                         kind,
                         false,
@@ -799,10 +811,7 @@ fn run_worker(
                 progress: job_progress,
                 reply,
             } => {
-                let renderer = engines
-                    .get(&engine_name)
-                    .or_else(|| engines.get("r1"))
-                    .expect("r1 always opened");
+                let default_renderer = resolve_engine(&engine_name).unwrap_or(default_fallback);
                 let progress_cb: Option<Box<dyn Fn(usize, usize) + Sync>> = Some(Box::new({
                     let counters = job_progress.clone();
                     move |done: usize, total: usize| counters.report(done, total)
@@ -824,10 +833,28 @@ fn run_worker(
                         .as_ref()
                         .map(|m| m.as_ref())
                         .unwrap_or(&empty_media);
-                    pipeline::render_mixdown_with_pronunciations(
+                    let track_renderers: Vec<&'static dyn pipeline::PhraseRenderer> = project
+                        .tracks
+                        .iter()
+                        .map(|t| {
+                            t.renderer_settings
+                                .as_ref()
+                                .and_then(|s| s.renderer.as_deref())
+                                .and_then(resolve_engine)
+                                .unwrap_or(default_renderer)
+                        })
+                        .collect();
+                    let engine_by_track = move |track_no: usize| -> &'static dyn pipeline::PhraseRenderer {
+                        track_renderers
+                            .get(track_no)
+                            .copied()
+                            .unwrap_or(default_renderer)
+                    };
+                    pipeline::render_mixdown_with_pronunciations_and_engines(
                         &project,
                         &voicebank,
-                        renderer.as_ref(),
+                        default_renderer,
+                        Some(&engine_by_track),
                         None,
                         false,
                         &mut cache,
@@ -851,10 +878,7 @@ fn run_worker(
                 progress: job_progress,
                 events,
             } => {
-                let renderer = engines
-                    .get(&engine_name)
-                    .or_else(|| engines.get("r1"))
-                    .expect("r1 always opened");
+                let default_renderer = resolve_engine(&engine_name).unwrap_or(default_fallback);
                 let progress_cb: Option<Box<dyn Fn(usize, usize) + Sync>> = Some(Box::new({
                     let counters = job_progress.clone();
                     move |done: usize, total: usize| counters.report(done, total)
@@ -882,10 +906,28 @@ fn run_worker(
                         .iter()
                         .map(|bank| bank.as_deref())
                         .collect::<Vec<_>>();
-                    pipeline::render_mixdown_stream_by_track_from_frame(
+                    let track_renderers: Vec<&'static dyn pipeline::PhraseRenderer> = project
+                        .tracks
+                        .iter()
+                        .map(|t| {
+                            t.renderer_settings
+                                .as_ref()
+                                .and_then(|s| s.renderer.as_deref())
+                                .and_then(resolve_engine)
+                                .unwrap_or(default_renderer)
+                        })
+                        .collect();
+                    let engine_by_track = move |track_no: usize| -> &'static dyn pipeline::PhraseRenderer {
+                        track_renderers
+                            .get(track_no)
+                            .copied()
+                            .unwrap_or(default_renderer)
+                    };
+                    pipeline::render_mixdown_stream_by_track_from_frame_with_engines(
                         &project,
                         &voicebank_refs,
-                        renderer.as_ref(),
+                        default_renderer,
+                        Some(&engine_by_track),
                         None,
                         &mut cache,
                         media,

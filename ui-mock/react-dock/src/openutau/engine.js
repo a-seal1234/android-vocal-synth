@@ -37,6 +37,8 @@ const COMMAND_FOR = {
   // engine normalises a blank string the same way, so the picker and the
   // command agree on what "no singer" means.
   'track/singer': ({ trackId, singerId }) => [{ type: 'track.set_singer', track_id: trackId, singer_id: singerId }],
+  // `null` clears the renderer (falls back to project default engine).
+  'track/renderer': ({ trackId, renderer }) => [{ type: 'track.set_renderer', track_id: trackId, renderer: renderer || null }],
   'note/add': ({ partId, tick, tone, durationTicks, lyric }) => [{ type: 'note.add', part_id: partId, position_ticks: tick, tone, duration_ticks: durationTicks, lyric }],
   'note/remove': ({ ids }) => ids.map(noteId => ({ type: 'note.remove', note_id: noteId })),
   'note/move': ({ updates }, findNote) => updates.flatMap(update => {
@@ -210,6 +212,7 @@ export function createEngine({ kind, baseUrl, onChange, onError, onWorkerLifecyc
       // placeholder here would look like a real singer name. Panels render
       // their own placeholder for the empty case.
       singer_id: track.singer_id ?? null,
+      renderer: track.renderer ?? null,
       singer_detail: track.singer_detail || '',
       mute: !!track.mute,
       solo: !!track.solo,

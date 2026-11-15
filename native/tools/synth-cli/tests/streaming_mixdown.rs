@@ -1013,3 +1013,183 @@ fn t050_real_miku_shoushitsu_track2_and_warm_edit_seek_under_500ms() {
         "warmed project localized-edit playhead seek TTFS {ttfs_ms:.2} ms >= 500 ms"
     );
 }
+
+#[test]
+fn streamed_mixdown_routes_per_track_engines() {
+    let mut project = UProject::create();
+    project.tracks = vec![
+        UTrack {
+            track_name: "track0".into(),
+            ..Default::default()
+        },
+        UTrack {
+            track_name: "track1".into(),
+            ..Default::default()
+        },
+    ];
+    let mut voice0 = UVoicePart::new("v0");
+    voice0.track_no = 0;
+    voice0.duration = 480 * 2;
+    voice0.notes = vec![UNote {
+        position: 0,
+        duration: 480,
+        tone: 60,
+        lyric: "a".into(),
+        ..Default::default()
+    }];
+    let mut voice1 = UVoicePart::new("v1");
+    voice1.track_no = 1;
+    voice1.duration = 480 * 2;
+    voice1.notes = vec![UNote {
+        position: 0,
+        duration: 480,
+        tone: 64,
+        lyric: "a".into(),
+        ..Default::default()
+    }];
+    project.parts.push(UPart::Voice(voice0));
+    project.parts.push(UPart::Voice(voice1));
+    project.after_load().expect("initialize time axis");
+
+    let bank = voicebank::Voicebank::from_oto_bytes(
+        "test-bank",
+        "test-bank",
+        "voice",
+        "voice/oto.ini",
+        b"a.wav=a,0,100,0,0,0\n",
+    );
+    let banks = [Some(&bank), Some(&bank)];
+    let default_renderer = SilentRenderer;
+
+    static R0: CountingRenderer = CountingRenderer {
+        calls: AtomicUsize::new(0),
+    };
+    static R1: CountingRenderer = CountingRenderer {
+        calls: AtomicUsize::new(0),
+    };
+    R0.calls.store(0, Ordering::SeqCst);
+    R1.calls.store(0, Ordering::SeqCst);
+
+    let engine_by_track = |track_no: usize| -> &'static dyn PhraseRenderer {
+        if track_no == 0 {
+            &R0
+        } else {
+            &R1
+        }
+    };
+
+    let media = MemoryMediaSource::new();
+    let mut cache = None;
+    let mut emitted = Vec::new();
+    let report = pipeline::render_mixdown_stream_by_track_from_frame_with_engines(
+        &project,
+        &banks,
+        &default_renderer,
+        Some(&engine_by_track),
+        Some(phonemizer::PhonemizerKind::Default),
+        &mut cache,
+        &media,
+        None,
+        None,
+        None,
+        pipeline::STREAM_BLOCK_FRAMES,
+        0,
+        |_frame, samples| {
+            emitted.extend_from_slice(samples);
+            Ok(())
+        },
+    )
+    .expect("render stream with per-track engines");
+
+    assert_eq!(report.tracks.len(), 2);
+    assert_eq!(R0.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(R1.calls.load(Ordering::SeqCst), 1);
+    assert!(!emitted.is_empty());
+}
+
+#[test]
+fn offline_mixdown_routes_per_track_engines() {
+    let mut project = UProject::create();
+    project.tracks = vec![
+        UTrack {
+            track_name: "track0".into(),
+            ..Default::default()
+        },
+        UTrack {
+            track_name: "track1".into(),
+            ..Default::default()
+        },
+    ];
+    let mut voice0 = UVoicePart::new("v0");
+    voice0.track_no = 0;
+    voice0.duration = 480 * 2;
+    voice0.notes = vec![UNote {
+        position: 0,
+        duration: 480,
+        tone: 60,
+        lyric: "a".into(),
+        ..Default::default()
+    }];
+    let mut voice1 = UVoicePart::new("v1");
+    voice1.track_no = 1;
+    voice1.duration = 480 * 2;
+    voice1.notes = vec![UNote {
+        position: 0,
+        duration: 480,
+        tone: 64,
+        lyric: "a".into(),
+        ..Default::default()
+    }];
+    project.parts.push(UPart::Voice(voice0));
+    project.parts.push(UPart::Voice(voice1));
+    project.after_load().expect("initialize time axis");
+
+    let bank = voicebank::Voicebank::from_oto_bytes(
+        "test-bank",
+        "test-bank",
+        "voice",
+        "voice/oto.ini",
+        b"a.wav=a,0,100,0,0,0\n",
+    );
+    let default_renderer = SilentRenderer;
+
+    static R0_OFFLINE: CountingRenderer = CountingRenderer {
+        calls: AtomicUsize::new(0),
+    };
+    static R1_OFFLINE: CountingRenderer = CountingRenderer {
+        calls: AtomicUsize::new(0),
+    };
+    R0_OFFLINE.calls.store(0, Ordering::SeqCst);
+    R1_OFFLINE.calls.store(0, Ordering::SeqCst);
+
+    let engine_by_track = |track_no: usize| -> &'static dyn PhraseRenderer {
+        if track_no == 0 {
+            &R0_OFFLINE
+        } else {
+            &R1_OFFLINE
+        }
+    };
+
+    let media = MemoryMediaSource::new();
+    let mut cache = None;
+    let report = pipeline::render_mixdown_with_pronunciations_and_engines(
+        &project,
+        &bank,
+        &default_renderer,
+        Some(&engine_by_track),
+        Some(phonemizer::PhonemizerKind::Default),
+        false,
+        &mut cache,
+        &media,
+        None,
+        None,
+        None,
+        None,
+    )
+    .expect("render mixdown with per-track engines");
+
+    assert_eq!(report.tracks.len(), 2);
+    assert_eq!(R0_OFFLINE.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(R1_OFFLINE.calls.load(Ordering::SeqCst), 1);
+    assert!(!report.samples.is_empty());
+}

@@ -225,6 +225,8 @@ function applyToMock(state, intent) {
     // same way the connected one does.
     case 'track/singer':
       return { ...state, tracks: state.tracks.map(t => t.id === intent.trackId ? { ...t, singer_id: intent.singerId?.trim() || null } : t) };
+    case 'track/renderer':
+      return { ...state, tracks: state.tracks.map(t => t.id === intent.trackId ? { ...t, renderer: intent.renderer?.trim() || null } : t) };
     case 'part/add': {
       const track = state.tracks.find(t => t.id === intent.trackId);
       if (!track) return state;
