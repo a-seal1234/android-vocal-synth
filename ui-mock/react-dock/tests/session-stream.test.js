@@ -103,6 +103,31 @@ test('begin negotiates revision-pinned stream and pending next retries with a fr
   await socket.close();
 });
 
+test('begin sends start_frame seek range in stream options', async () => {
+  MockWebSocket.instances.length = 0;
+  const socket = new SessionStreamSocket(config);
+  const ws = MockWebSocket.instances.at(-1);
+  ws.onRequest = request => {
+    if (request.method === 'session_render_stream_begin') {
+      ws.reply({
+        request_id: request.request_id,
+        status: 'preparing',
+        stream_id: 'stream-seek-1',
+        session_id: 's-1',
+        revision: 4,
+        sample_rate: 44100,
+        range: { start_frame: request.params.options.range.start_frame, end_frame: null },
+        limits: { max_block_frames: 4096 },
+      });
+    }
+  };
+  const begun = await socket.begin(22050);
+  assert.equal(begun.range.start_frame, 22050);
+  const beginReq = ws.sent.find(item => item.method === 'session_render_stream_begin');
+  assert.deepEqual(beginReq.params.options.range, { start_frame: 22050, end_frame: null });
+  await socket.close();
+});
+
 test('handshake refuses progressive playback when the feature group is absent', async () => {
   MockWebSocket.instances.length = 0;
   const socket = new SessionStreamSocket(config);

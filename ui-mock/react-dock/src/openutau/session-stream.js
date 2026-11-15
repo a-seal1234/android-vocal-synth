@@ -146,11 +146,11 @@ export class SessionStreamSocket {
     }));
   }
 
-  async begin() {
+  async begin(startFrame = 0) {
     const reply = await this.request('session_render_stream_begin', {
       expected_revision: this.revision,
       engine: 'r1',
-      options: { mode: 'playback', sample_rate: 44100, layout: 'stereo', range: { start_frame: 0, end_frame: null } },
+      options: { mode: 'playback', sample_rate: 44100, layout: 'stereo', range: { start_frame: startFrame, end_frame: null } },
     });
     if (reply.status !== 'preparing' || !reply.stream_id || reply.revision !== this.revision) {
       throw new Error(reply.error?.message || 'Native stream did not accept the current project revision');

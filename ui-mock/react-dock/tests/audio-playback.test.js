@@ -326,3 +326,76 @@ test('stream pump keeps a bounded sixteen-second lookahead and reports underruns
   player.pause();
 });
 
+test('playhead seek at positive tick begins stream from target frame', async t => {
+  replaceGlobal(t, 'window', { AudioContext: FakeAudioContext });
+  replaceGlobal(t, 'AudioWorkletNode', FakeAudioWorkletNode);
+
+  function pcmFrame(header, left, right) {
+    const json = new TextEncoder().encode(JSON.stringify({ ...header, frame_count: left.length }));
+    const buffer = new ArrayBuffer(8 + json.length + (left.length + right.length) * 4);
+    const bytes = new Uint8Array(buffer);
+    bytes.set(new TextEncoder().encode('RUP3'));
+    new DataView(buffer).setUint32(4, json.length, true);
+    bytes.set(json, 8);
+    const view = new DataView(buffer);
+    let offset = 8 + json.length;
+    for (const sample of [...left, ...right]) { view.setFloat32(offset, sample, true); offset += 4; }
+    return buffer;
+  }
+
+  let capturedBeginRange = null;
+  class SeekStreamingSocket {
+    static OPEN = 1;
+    constructor() {
+      this.readyState = 1;
+      queueMicrotask(() => this.onopen?.());
+    }
+    send(raw) {
+      const request = JSON.parse(raw);
+      if (request.type === 'hello') {
+        queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({
+          type: 'hello', status: 'ready', contract_version: '3.0-draft',
+          capabilities: { feature_groups: ['render.stream'] },
+        }) }));
+      } else if (request.method === 'session_render_stream_begin') {
+        capturedBeginRange = request.params?.options?.range;
+        const startFrame = capturedBeginRange?.start_frame ?? 0;
+        queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({
+          request_id: request.request_id, status: 'preparing', stream_id: 'stream-seek',
+          session_id: 's-1', revision: 4, sample_rate: 44100,
+          range: { start_frame: startFrame, end_frame: null },
+          limits: { max_block_frames: 4096 },
+        }) }));
+      } else if (request.method === 'session_render_stream_next') {
+        const startFrame = capturedBeginRange?.start_frame ?? 0;
+        queueMicrotask(() => this.onmessage?.({ data: pcmFrame({
+          request_id: request.request_id, status: 'data', stream_id: 'stream-seek',
+          session_id: 's-1', revision: 4, sequence: 0, frame_start: startFrame,
+        }, new Float32Array(512).fill(0.1), new Float32Array(512).fill(-0.1)) }));
+      }
+    }
+    close() { this.readyState = 3; queueMicrotask(() => this.onclose?.()); }
+  }
+
+  const player = createAudioPlayer({
+    getSessionStream: () => ({
+      baseUrl: 'http://127.0.0.1:8765', sessionId: 's-1', revision: 4,
+      credential: 'x'.repeat(32), WebSocketCtor: SeekStreamingSocket,
+    }),
+    getPool: () => null,
+    getBpm: () => 120,
+  });
+  t.after(() => player.dispose());
+
+  // At 120 BPM, tick 960 = 2 beats = 1000ms = 44100 frames
+  await player.play(960);
+  assert.deepEqual(capturedBeginRange, { start_frame: 44100, end_frame: null });
+  const node = FakeAudioWorkletNode.last;
+  assert.ok(node);
+  const startMsg = node.messages.find(msg => msg.type === 'start');
+  assert.equal(startMsg?.frame, 44100);
+  const pushMsg = node.messages.find(msg => msg.type === 'push');
+  assert.equal(pushMsg?.frameStart, 44100);
+  player.pause();
+});
+

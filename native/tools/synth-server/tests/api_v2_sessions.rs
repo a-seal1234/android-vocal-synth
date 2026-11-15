@@ -326,6 +326,7 @@ async fn split_curve_boundary_is_preserved_by_native_http_adapter() {
                     name: "split-curve".into(),
                     ustx: SPLIT_CURVE_FIXTURE.into(),
                 },
+                recovery_id: None,
             }),
         )
         .await,
@@ -416,6 +417,7 @@ async fn open_stored(state: &Arc<AppState>, name: &str) -> String {
                 source: CreateSource::StoredProject {
                     name: name.to_string(),
                 },
+                recovery_id: None,
             }),
         )
         .await,
@@ -1191,6 +1193,7 @@ async fn native_server_and_wasm_share_stable_id_group_history_and_reopen_semanti
                 source: CreateSource::StoredProject {
                     name: "parity-save".to_string(),
                 },
+                recovery_id: None,
             }),
         )
         .await,
@@ -1267,6 +1270,7 @@ voice_parts:
                     name: "curve-parity".into(),
                     ustx: CURVE_USTX.into(),
                 },
+                recovery_id: None,
             }),
         )
         .await,
@@ -1375,6 +1379,7 @@ async fn a_new_session_uses_the_requested_name_and_bpm_at_revision_zero() {
                     name: Some("Contract New".to_string()),
                     bpm: Some(123.0),
                 },
+                recovery_id: None,
             }),
         )
         .await,
@@ -1536,6 +1541,7 @@ async fn an_imported_ustx_session_starts_fresh() {
                     name: "from-openutau".to_string(),
                     ustx: DEMO.to_string(),
                 },
+                recovery_id: None,
             }),
         )
         .await,
@@ -1948,6 +1954,7 @@ async fn shared_curve_adapter_vector_matches_native_http_routes() {
                     name: "shared-curve".into(),
                     ustx: SHARED_CURVE_FIXTURE.into(),
                 },
+                recovery_id: None,
             }),
         )
         .await,
@@ -2128,6 +2135,7 @@ async fn save_as_forks_project_id_only_and_reopens_with_continuous_entity_ids() 
                 source: CreateSource::StoredProject {
                     name: "save-as-copy".into(),
                 },
+                recovery_id: None,
             }),
         )
         .await,

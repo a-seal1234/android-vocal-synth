@@ -191,6 +191,7 @@ struct LiveStream {
     cancel_events: watch::Receiver<bool>,
     events: EventReceiver,
     sequence: u64,
+    start_frame: u64,
     next_frame: u64,
     received_frame: u64,
     pending_samples: VecDeque<f32>,
@@ -355,11 +356,18 @@ fn start_stream(
     let cancel = Arc::new(AtomicBool::new(false));
     let (cancel_signal, cancel_events) = watch::channel(false);
     let progress = Arc::new(ProgressCounters::default());
+    let start_frame = params
+        .get("options")
+        .and_then(|o| o.get("range"))
+        .and_then(|r| r.get("start_frame"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let events = match renderer.render_mixdown_stream_snapshot(
         yaml,
         voicebanks,
         &engine,
         pronunciations,
+        start_frame,
         cancel.clone(),
         progress,
     ) {
@@ -380,8 +388,9 @@ fn start_stream(
         cancel_events,
         events,
         sequence: 0,
-        next_frame: 0,
-        received_frame: 0,
+        start_frame,
+        next_frame: start_frame,
+        received_frame: start_frame,
         pending_samples: VecDeque::new(),
         terminal: None,
         pending_terminal: None,
@@ -440,7 +449,7 @@ fn validate_stream_options(params: &Value) -> Result<(), (String, String, Option
             None,
         )
     })?;
-    let start_frame = range
+    let _start_frame = range
         .get("start_frame")
         .and_then(Value::as_u64)
         .ok_or_else(|| {
@@ -464,10 +473,10 @@ fn validate_stream_options(params: &Value) -> Result<(), (String, String, Option
             None,
         ));
     }
-    if start_frame != 0 || !end_frame.is_null() {
+    if !end_frame.is_null() {
         return Err((
             "unsupported_range".into(),
-            "The initial sequential stream supports range [0, end) only".into(),
+            "The stream backend currently supports open-ended range [start_frame, end) only".into(),
             None,
         ));
     }
@@ -917,7 +926,7 @@ async fn dispatch_stream_request(
                         "request_id": request_id, "status": "preparing", "stream_id": stream.id,
                         "generation": stream.generation, "session_id": stream.session_id, "revision": stream.revision,
                         "sample_rate": 44100, "channels": 2, "layout": "stereo", "pcm_format": "f32le_planar",
-                        "range": {"start_frame": 0, "end_frame": null}, "timing_profiles": [],
+                        "range": {"start_frame": stream.start_frame, "end_frame": null}, "timing_profiles": [],
                         "limits": {"max_block_frames": MAX_STREAM_BLOCK_FRAMES, "max_wait_ms": MAX_STREAM_WAIT_MS}
                     });
                     streams.insert(stream.id.clone(), stream);
@@ -1058,7 +1067,7 @@ async fn dispatch_stream_request(
                     Ok(EventRead::Event(StreamRenderEvent::Finished(Ok(report)))) => {
                         if report.channels != 2
                             || report.sample_rate != 44100
-                            || report.frames != stream.received_frame
+                            || report.frames != (stream.received_frame - stream.start_frame)
                         {
                             let terminal = terminal_reply(
                                 stream,
@@ -1387,9 +1396,11 @@ mod tests {
     }
 
     #[test]
-    fn stream_options_reject_nonzero_or_bounded_ranges() {
+    fn stream_options_allow_open_ended_seek_and_reject_bounded_ranges() {
         let base = json!({"options":{"mode":"playback","sample_rate":44100,"layout":"stereo","range":{"start_frame":0,"end_frame":null}}});
         assert!(validate_stream_options(&base).is_ok());
+        let seek = json!({"options":{"mode":"playback","sample_rate":44100,"layout":"stereo","range":{"start_frame":44100,"end_frame":null}}});
+        assert!(validate_stream_options(&seek).is_ok());
         let bounded = json!({"options":{"mode":"playback","sample_rate":44100,"layout":"stereo","range":{"start_frame":0,"end_frame":1024}}});
         assert_eq!(
             validate_stream_options(&bounded).unwrap_err().0,
@@ -1458,6 +1469,7 @@ mod tests {
                     cancel_events,
                     events: Arc::new(std::sync::Mutex::new(event_receiver)),
                     sequence: 0,
+                    start_frame: 0,
                     next_frame: 0,
                     received_frame: 0,
                     pending_samples: std::collections::VecDeque::new(),
@@ -1638,6 +1650,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn websocket_stream_begin_accepts_seek_start_frame() {
+        let (url, server) = start_test_server().await;
+        let (mut socket, _) =
+            tokio_tungstenite::connect_async(hello_request(&url, "https://app.example"))
+                .await
+                .unwrap();
+        socket
+            .send(ClientMessage::Text(
+                json!({
+                    "type": "hello",
+                    "session_id": null,
+                    "params": {
+                        "credential": SECRET,
+                        "contract_versions": [CONTRACT_VERSION],
+                        "required_feature_groups": []
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let _ = socket.next().await.unwrap().unwrap();
+        socket
+            .send(ClientMessage::Text(
+                json!({
+                    "request_id": "req-seek",
+                    "method": "session_render_stream_begin",
+                    "session_id": "missing-session",
+                    "params": {
+                        "expected_revision": 0,
+                        "options": {
+                            "mode": "playback",
+                            "sample_rate": 44100,
+                            "layout": "stereo",
+                            "range": { "start_frame": 44100, "end_frame": null }
+                        }
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let response = socket.next().await.unwrap().unwrap();
+        let ClientMessage::Text(response) = response else {
+            panic!("expected stream validation JSON")
+        };
+        let value: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(value["request_id"], "req-seek");
+        // Passed options and range validation; fails on renderer in test server without backend
+        assert_eq!(value["error"]["code"], "backend_unavailable");
+        let _ = socket.close(None).await;
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn closed_stream_close_is_idempotent_and_next_is_rejected() {
         let state = Arc::new(crate::state::AppState::new(
             Default::default(),
@@ -1698,6 +1767,7 @@ mod tests {
             cancel_events,
             events: Arc::new(std::sync::Mutex::new(event_receiver)),
             sequence: 0,
+            start_frame: 0,
             next_frame: 0,
             received_frame: 0,
             pending_samples: std::collections::VecDeque::new(),

@@ -207,10 +207,10 @@ export function createAudioPlayer({ getTake = () => null, getCompletedTake = nul
 
     const bpm = getBpm();
     const wantMs = tickToMs(tick, bpm);
-    // Native streaming currently starts at frame zero and requires AudioWorklet.
-    // A completed take still supports seeking and older browsers, so use it
+    // Native streaming supports seeking and requires AudioWorklet.
+    // A completed take still supports older browsers, so use it
     // whenever the streaming path cannot serve this request.
-    if (streamConfig && wantMs <= 0.5 && ctx.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
+    if (streamConfig && ctx.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
       try {
         trace?.mark?.('stream_starting');
         return await startSessionStream(streamConfig, wantMs, bpm, intent);
@@ -249,9 +249,10 @@ export function createAudioPlayer({ getTake = () => null, getCompletedTake = nul
     stopSource();
     const transport = new SessionStreamSocket(config);
     activeStream = transport;
+    const targetStartFrame = Math.max(0, Math.floor((wantMs / 1000) * SAMPLE_RATE));
     let begin;
     playbackTrace?.mark?.('stream_begin_request_started');
-    try { begin = await transport.begin(); }
+    try { begin = await transport.begin(targetStartFrame); }
     catch (error) {
       if (activeStream === transport) activeStream = null;
       await transport.close();
@@ -264,13 +265,13 @@ export function createAudioPlayer({ getTake = () => null, getCompletedTake = nul
       throw transport.stopRequested ? playbackCancelledError() : new Error('Audio stream stopped');
     }
     const rate = begin.sample_rate || SAMPLE_RATE;
-    const startFrame = 0;
+    const startFrame = Number.isSafeInteger(begin.range?.start_frame) ? begin.range.start_frame : targetStartFrame;
     const node = new AudioWorkletNode(ctx, 'rusted-utau-session-stream-player', {
       numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
     });
     streamUnderruns = { events: 0, frames: 0, last: null };
     let bufferedFrames = 0;
-    let expectedFrame = 0;
+    let expectedFrame = startFrame;
     let ended = false;
     let pumpPromise = null;
     const at = ctx.currentTime + START_LEAD_S;
@@ -383,7 +384,7 @@ export function createAudioPlayer({ getTake = () => null, getCompletedTake = nul
       }
       if (activeStream !== transport) throw new Error('Audio stream stopped');
       node.port.postMessage({ type: 'start', frame: startFrame, startAt: at });
-      playbackTrace?.mark?.('audio_scheduled', { startAtContextTime: at, sampleRate: rate });
+      playbackTrace?.mark?.('audio_scheduled', { startAtContextTime: at, sampleRate: rate, startFrame });
       started = { at, absMs: wantMs, frame: startFrame, frameAt: at, frames: Infinity, rate, underrunFramesAtAnchor: streamUnderruns.frames };
       startPump();
       return msToTick(wantMs, bpm);

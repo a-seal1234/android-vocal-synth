@@ -210,6 +210,7 @@ enum RenderJob {
         engine: String,
         media: Option<SharedMedia>,
         pronunciations: Vec<Vec<Vec<Option<domain::UPronunciation>>>>,
+        start_frame: u64,
         cancel: Arc<AtomicBool>,
         progress: Arc<ProgressCounters>,
         events: mpsc::SyncSender<StreamRenderEvent>,
@@ -470,6 +471,7 @@ impl RenderService {
         voicebanks: Vec<Option<Arc<Voicebank>>>,
         engine: &str,
         pronunciations: Vec<Vec<Vec<Option<domain::UPronunciation>>>>,
+        start_frame: u64,
         cancel: Arc<AtomicBool>,
         progress: Arc<ProgressCounters>,
     ) -> Result<mpsc::Receiver<StreamRenderEvent>, String> {
@@ -481,6 +483,7 @@ impl RenderService {
                 engine: engine.to_string(),
                 media: self.media.clone(),
                 pronunciations,
+                start_frame,
                 cancel,
                 progress,
                 events: events_tx,
@@ -843,6 +846,7 @@ fn run_worker(
                 engine: engine_name,
                 media: wave_media,
                 pronunciations,
+                start_frame,
                 cancel: job_cancel,
                 progress: job_progress,
                 events,
@@ -878,7 +882,7 @@ fn run_worker(
                         .iter()
                         .map(|bank| bank.as_deref())
                         .collect::<Vec<_>>();
-                    pipeline::render_mixdown_stream_by_track_with_pronunciations(
+                    pipeline::render_mixdown_stream_by_track_from_frame(
                         &project,
                         &voicebank_refs,
                         renderer.as_ref(),
@@ -889,6 +893,7 @@ fn run_worker(
                         progress_cb.as_deref(),
                         Some(&pronunciations),
                         pipeline::STREAM_BLOCK_FRAMES,
+                        start_frame as i64,
                         |frame_start, samples| {
                             send_stream_event(
                                 &events,

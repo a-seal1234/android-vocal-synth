@@ -1,8 +1,8 @@
 # T034 — P2B streaming seek and stateful FX continuity
 
-**Status:** blocked — source-bounded legacy FX, versioned seek snapshots, past-source-end behavior, and cache policy are confirmed; implementation awaits T033 base-streaming gates and bounded T034 handoff for shared paths
-**Owner:** unassigned — proposed Streaming/audio lane
-**Last updated (UTC):** 2026-10-15T08:30:39Z
+**Status:** active — playhead seek (`start_frame`) is implemented and verified end-to-end from T050 `render_mixdown_stream_with_pronunciations_from_frame` through `synth-server` (`render_service.rs` / `stream_ws.rs`) up to Web AudioWorklet (`session-stream.js` / `audio-playback.js`). Flutter/Android path marked stale per user direction.
+**Owner:** Antigravity
+**Last updated (UTC):** 2026-11-15T08:50:00Z
 
 ## Scope and deliverables
 
@@ -228,3 +228,24 @@ No files in `native/tools/synth-cli/src/pipeline/streaming.rs`, `native/tools/sy
 
 - Added the confirmed `stream.seek.v1` past-source-end result and 32 MiB/session checkpoint eviction/close policy to `docs/planning/contract-mk3-proposal.md` §1 and §6.1, and removed the obsolete “exact cache limits require review” blocker from its capability table.
 - The contract remains a logical draft baseline and does not claim seek is implemented or advertised. T034 still needs the T033 host gate and bounded source ownership for shared stream/FX files before runtime work.
+
+## End-to-end playhead seek implementation and Flutter deprecation (2026-11-15T08:50:00Z)
+
+- **Backend / Engine wiring**:
+  - `native/tools/synth-server/src/render_service.rs`: Updated `RenderJob::RenderMixdownStream` and `render_mixdown_stream_snapshot` to accept `start_frame: u64` and route to `pipeline::render_mixdown_stream_by_track_from_frame(..., start_frame as i64, ...)`.
+  - `native/tools/synth-server/src/stream_ws.rs`: Updated `LiveStream` to track `start_frame: u64`. `start_stream` extracts `start_frame` from `params.options.range.start_frame` (defaults to 0), initializes `next_frame = start_frame` and `received_frame = start_frame`, and passes `start_frame` to `render_mixdown_stream_snapshot`.
+  - `validate_stream_options`: Accepts open-ended seek ranges (`start_frame >= 0`, `end_frame.is_null()`), rejecting bounded ranges with `unsupported_range`.
+  - `session_render_stream_begin` response includes `"range": {"start_frame": stream.start_frame, "end_frame": null}`.
+  - Finished stream frame accounting verifies `report.frames != (stream.received_frame - stream.start_frame)`.
+  - Tests added: `websocket_stream_begin_accepts_seek_start_frame` and updated `stream_options_allow_open_ended_seek_and_reject_bounded_ranges`.
+- **Frontend Web UI wiring**:
+  - `ui-mock/react-dock/src/openutau/session-stream.js`: `begin(startFrame = 0)` passes `range: { start_frame: startFrame, end_frame: null }`.
+  - `ui-mock/react-dock/src/openutau/audio-playback.js`: Removed `wantMs <= 0.5` limitation in `play(...)`. In `startSessionStream(...)`, calculates `startFrame = Math.max(0, Math.floor((wantMs / 1000) * SAMPLE_RATE))`, passes it to `transport.begin(targetStartFrame)`, sets `expectedFrame = startFrame`, and anchors worklet player clock and trace with `startFrame`.
+  - Tests added: `begin sends start_frame seek range in stream options` in `tests/session-stream.test.js`, and `playhead seek at positive tick begins stream from target frame` in `tests/audio-playback.test.js`.
+- **Flutter path deprecation**:
+  - Marked Flutter/Android as an officially stale and abandoned path per explicit user instruction on 2026-11-15. Focus is entirely on Web/React-Dock + Rust engine.
+- **Verification outcome**:
+  - `synth-server` lib tests: 54/54 passed.
+  - `synth-server` tests suite: 32/32 sessions tests, 2/2 router tests, 1 real test passed.
+  - `ui-mock/react-dock` tests: 162/162 passed, 3 skipped (due to missing server env var), 0 failed.
+  - `npm run build` in `ui-mock/react-dock` built cleanly.
