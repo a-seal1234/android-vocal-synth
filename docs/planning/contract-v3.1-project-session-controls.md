@@ -82,9 +82,11 @@ survive bank-alias changes, and must reject stale or changed sequence
 fingerprints. No UI control should expose indexed writes before that API and
 render consumption are implemented.
 
-Track singer references are persistent project state and have a stable-ID
-setter. Track color and editor appearance are presentation state; phonemizer /
-renderer configuration needs a separate validated command and remains out of
+Track singer and renderer references are persistent project state with stable-ID
+setters (`track.set_singer` and `track.set_renderer`, T052). Both trim whitespace and normalize
+empty/null to clear to default, persisting in `UTrack` (`singer` and `renderer_settings.renderer`)
+for exact `.ustx` round-trip. Track color and editor appearance are presentation state; phonemizer
+configuration needs a separate validated command and remains out of
 this increment. Mixer FX follow the accepted MK3 3.0/T018 contract. Track
 duplication is deferred; note split remains a grouped `part`/`note` operation
 and does not need a second semantic command.

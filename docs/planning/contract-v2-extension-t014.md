@@ -151,7 +151,7 @@ settings, color, mix FX, and track expressions.
 | singer | `track.set_singer` | Already **implemented** — routed in `project-session/src/v2.rs:1664`, covered by `tests/track_singer.rs` (T013). Listed for completeness. |
 | phonemizer | `track.set_phonemizer` | Now backed by real semantics: `phonemizer::PhonemizerKind::from_track` (moved out of the CLI crate on 2026-10-04). The value stored is the **OpenUtau registered key** verbatim, not a Rusted UTAU enum name, so `.ustx` round-trips. |
 | color | `track.set_color` | Pure presentation, but persisted in the domain and written to `.ustx`. Presentation-only would mean the file cannot round-trip. |
-| renderer settings | **deferred** | Engine-specific; needs its own per-renderer contract. |
+| renderer settings | `track.set_renderer` | **Implemented** in T052 — routed in `project-session/src/v2.rs`, covered by `tests/track_renderer.rs`, persists in `URenderSettings.renderer`. |
 | mix FX | **deferred** | T014 section E; sequenced after the track commands. |
 | track expressions | **deferred** | Distinct from part-level expression curves, which already work. |
 

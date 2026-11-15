@@ -370,6 +370,7 @@ Snapshot เป็น read-only DTO; canonical file ยังเป็น USTX �
       "id": "uuid",
       "name": "Lead Vocal",
       "singer_id": "teto",
+      "renderer": "classic",
       "mute": false, "solo": false,
       "volume_db": 0.0, "pan": 0.0,
       "parts": [{
@@ -470,7 +471,7 @@ current `snapshot_schema_version: 1` implementation emits it.
 | `project.changed` | — | — | canonical `ProjectMetaView` (see §6.4.4) |
 | `track.added` | `track_id` | — | track metadata + empty parts |
 | `track.removed` | `track_id` | — | — |
-| `track.changed` | `track_id` | — | track metadata (name/singer/mute/solo/volume/pan) |
+| `track.changed` | `track_id` | — | track metadata (name/singer/renderer/mute/solo/volume/pan) |
 | `part.added` | `track_id`, `part_id` | — | canonical `PartView` + notes/curves |
 | `part.removed` | `track_id`, `part_id` | — | — |
 | `part.changed` | `track_id`, `part_id` | `start_tick`,`end_tick` (part-relative) | canonical `PartView` or invalidate |
@@ -1254,6 +1255,8 @@ The required note/track command field sets are:
 | `note.move` | `note_id`, optional `delta_position_ticks` (default 0), optional `delta_tone` (default 0) |
 | `note.resize` | `note_id`, `delta_duration_ticks`, optional `from_start` (default false) |
 | `track.rename` | `track_id`, `name` |
+| `track.set_singer` | `track_id`, optional `singer_id` (string, or null/empty to clear) |
+| `track.set_renderer` | `track_id`, optional `renderer` (string, or null/empty to clear to project default) |
 | `track.set_mute` / `track.set_solo` | `track_id`, matching boolean field `mute` / `solo` |
 | `track.set_volume_db` | `track_id`, `volume_db` |
 | `track.set_pan` | `track_id`, `pan` |
